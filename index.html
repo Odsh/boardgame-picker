@@ -2,81 +2,70 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Fair Turn Order Picker</title>
+  <title>Deterministic Turn Order</title>
   <style>
     body { font-family: sans-serif; max-width: 800px; margin: 40px auto; }
-    input, button { padding: 8px; margin: 4px; }
-    .row { display: flex; gap: 8px; flex-wrap: wrap; }
-    .box { padding: 10px; border: 1px solid #ddd; margin-top: 10px; }
+    .box { padding: 12px; border: 1px solid #ddd; margin-top: 12px; }
     code { background: #f5f5f5; padding: 2px 4px; }
   </style>
 </head>
+
 <body>
-
-<h2>🎲 Fair Turn Order Picker (Deterministic)</h2>
-
-<div class="box">
-  <h3>1. Participants</h3>
-  <div class="row">
-    <input id="nameInput" placeholder="Add player name" />
-    <button onclick="addPlayer()">Add</button>
-  </div>
-  <div id="players"></div>
-</div>
+<h2>🎲 Deterministic Board Game Order</h2>
 
 <div class="box">
-  <h3>2. Seed (locked once generated)</h3>
-  <button onclick="generateSeed()">Generate Seed</button>
-  <div>Seed: <code id="seedDisplay">—</code></div>
-</div>
-
-<div class="box">
-  <h3>3. Result</h3>
-  <button onclick="compute()">Compute Order</button>
-  <button onclick="verify()">Verify (recompute)</button>
+  <h3>Result order</h3>
   <ol id="result"></ol>
 </div>
 
 <div class="box">
-  <h3>4. Shareable link</h3>
-  <div id="share"></div>
+  <h3>Debug</h3>
+  <div id="debug"></div>
 </div>
 
 <script>
-let players = [];
-let seed = null;
+(function init() {
+  const path = window.location.pathname.replace(/^\/+/, "");
+  const parts = path.split("-");
 
-function updateUI() {
-  document.getElementById("players").innerHTML =
-    players.map((p, i) => `<div>${i+1}. ${p}</div>`).join("");
+  // must be: admin + (name,num)*N
+  if (parts.length < 3 || parts.length % 2 === 0) {
+    document.body.innerHTML = "<h3>Invalid format</h3><p>Use /admin-player1-num-player2-num...</p>";
+    return;
+  }
 
-  document.getElementById("seedDisplay").textContent = seed || "—";
+  const admin = parts[0];
 
-  const params = new URLSearchParams();
-  if (players.length) params.set("p", players.join(","));
-  if (seed) params.set("s", seed);
-  document.getElementById("share").innerHTML =
-    `<code>${location.origin + location.pathname + "?" + params.toString()}</code>`;
-}
+  const players = [];
+  const secrets = [];
 
-function addPlayer() {
-  const v = document.getElementById("nameInput").value.trim();
-  if (!v) return;
-  players.push(v);
-  document.getElementById("nameInput").value = "";
-  updateUI();
-}
+  // include admin as first player (no secret)
+  players.push(admin);
 
-function generateSeed() {
-  if (seed) return;
-  const arr = new Uint32Array(4);
-  crypto.getRandomValues(arr);
-  seed = Array.from(arr).join("-");
-  updateUI();
-}
+  // parse remaining pairs
+  for (let i = 1; i < parts.length; i += 2) {
+    players.push(parts[i]);
+    secrets.push(parts[i + 1]);
+  }
 
-function hashSeed(str) {
-  // simple deterministic hash → number
+  // seed = only secret numbers
+  const seed = secrets.join("|");
+
+  const shuffled = seededShuffle(players, seed);
+
+  document.getElementById("result").innerHTML =
+    shuffled.map(p => `<li>${p}</li>`).join("");
+
+  document.getElementById("debug").innerHTML = `
+    <div><b>Admin:</b> ${admin}</div>
+    <div><b>Players:</b> ${players.join(", ")}</div>
+    <div><b>Seed (from secrets only):</b> <code>${seed}</code></div>
+  `;
+})();
+
+
+// deterministic shuffle
+function hashString(str) {
   let h = 2166136261;
   for (let i = 0; i < str.length; i++) {
     h ^= str.charCodeAt(i);
@@ -85,17 +74,6 @@ function hashSeed(str) {
   return Math.abs(h);
 }
 
-function seededShuffle(arr, seedStr) {
-  let rng = mulberry32(hashSeed(seedStr));
-  let a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-// deterministic PRNG
 function mulberry32(a) {
   return function() {
     let t = a += 0x6D2B79F5;
@@ -105,39 +83,17 @@ function mulberry32(a) {
   }
 }
 
-function compute() {
-  if (!seed || players.length === 0) return;
-  const res = seededShuffle(players, seed);
-  render(res);
+function seededShuffle(arr, seedStr) {
+  const rng = mulberry32(hashString(seedStr));
+  const a = [...arr];
+
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+
+  return a;
 }
-
-function verify() {
-  // recompute from URL state (simulating independent verification)
-  const url = new URL(location.href);
-  const p = url.searchParams.get("p");
-  const s = url.searchParams.get("s");
-  if (!p || !s) return;
-
-  const res = seededShuffle(p.split(","), s);
-  render(res);
-}
-
-function render(res) {
-  document.getElementById("result").innerHTML =
-    res.map(x => `<li>${x}</li>`).join("");
-}
-
-// load from URL
-(function init() {
-  const url = new URL(location.href);
-  const p = url.searchParams.get("p");
-  const s = url.searchParams.get("s");
-
-  if (p) players = p.split(",");
-  if (s) seed = s;
-
-  updateUI();
-})();
 </script>
 
 </body>
