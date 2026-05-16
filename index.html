@@ -2,69 +2,254 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Deterministic Turn Order</title>
+  <title>Fair Board Game Order</title>
   <style>
-    body { font-family: sans-serif; max-width: 800px; margin: 40px auto; }
-    .box { padding: 12px; border: 1px solid #ddd; margin-top: 12px; }
+    body { font-family: sans-serif; max-width: 900px; margin: 40px auto; }
+    .box { border: 1px solid #ddd; padding: 12px; margin-top: 12px; }
+    input { padding: 6px; margin: 4px; }
+    button { padding: 6px 10px; margin: 4px; }
+    img { max-width: 100%; margin-top: 10px; border: 1px solid #ccc; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    a { word-break: break-all; }
     code { background: #f5f5f5; padding: 2px 4px; }
   </style>
 </head>
 
 <body>
-<h2>🎲 Deterministic Board Game Order</h2>
 
+<h2>🎲 Fair Board Game Order Tool</h2>
+
+<!-- IMAGE -->
 <div class="box">
-  <h3>Result order</h3>
+  <h3>🖼 Image</h3>
+  <div class="row">
+    <input id="imgInput" placeholder="Image URL" style="flex:1" />
+    <button onclick="applyImage()">Apply image</button>
+  </div>
+  <img id="imgPreview" />
+</div>
+
+<!-- PLAYERS -->
+<div class="box">
+  <h3>👥 Players</h3>
+  <div id="players"></div>
+  <button onclick="addPlayer()">+ Add player</button>
+</div>
+
+<!-- COMPUTE -->
+<div class="box">
+  <button onclick="compute()">Compute player order</button>
+</div>
+
+<!-- SEED -->
+<div class="box">
+  <h3>🔑 Seed</h3>
+  <div id="seed"></div>
+</div>
+
+<!-- RESULT -->
+<div class="box">
+  <h3>🏁 Result order</h3>
   <ol id="result"></ol>
 </div>
 
+<!-- SHARE -->
 <div class="box">
-  <h3>Debug</h3>
-  <div id="debug"></div>
+  <h3>🔗 Share result</h3>
+  <div id="shareLink"></div>
 </div>
 
 <script>
+
+/* =========================
+   STATE
+   ========================= */
+
+let state = {
+  image: "",
+  players: [
+    { name: "admin", secret: "", isAdmin: true }
+  ]
+};
+
+/* =========================
+   SANITIZE
+   ========================= */
+
+function sanitizeName(name) {
+  return name.replaceAll("|", "").trim();
+}
+
+/* =========================
+   INIT FROM URL
+   ========================= */
+
 (function init() {
-  const path = window.location.pathname.replace(/^\/+/, "");
-  const parts = path.split("-");
+  const url = new URL(window.location.href);
 
-  // must be: admin + (name,num)*N
-  if (parts.length < 3 || parts.length % 2 === 0) {
-    document.body.innerHTML = "<h3>Invalid format</h3><p>Use /admin-player1-num-player2-num...</p>";
-    return;
+  const img = url.searchParams.get("img");
+  if (img) state.image = img;
+
+  const pStr = url.searchParams.get("participants");
+
+  if (pStr) {
+    const entries = pStr.split("|");
+
+    state.players = [];
+
+    for (let i = 0; i < entries.length; i++) {
+      const part = entries[i];
+      const dash = part.lastIndexOf("-");
+
+      if (i === 0) {
+        state.players.push({
+          name: part,
+          secret: "",
+          isAdmin: true
+        });
+      } else {
+        const name = part.slice(0, dash);
+        const secret = part.slice(dash + 1);
+
+        state.players.push({
+          name,
+          secret,
+          isAdmin: false
+        });
+      }
+    }
   }
 
-  const admin = parts[0];
+  renderPlayers();
+  applyImageToUI();
+  compute();
+})();
 
-  const players = [];
-  const secrets = [];
+/* =========================
+   RENDER PLAYERS
+   ========================= */
 
-  // include admin as first player (no secret)
-  players.push(admin);
+function renderPlayers() {
+  const container = document.getElementById("players");
+  container.innerHTML = "";
 
-  // parse remaining pairs
-  for (let i = 1; i < parts.length; i += 2) {
-    players.push(parts[i]);
-    secrets.push(parts[i + 1]);
-  }
+  state.players.forEach((p, i) => {
+    const row = document.createElement("div");
+    row.className = "row";
 
-  // seed = only secret numbers
-  const seed = secrets.join("|");
+    const name = document.createElement("input");
+    name.value = p.name;
+    name.style.width = "160px";
+
+    name.oninput = e => {
+      p.name = sanitizeName(e.target.value);
+      e.target.value = p.name;
+    };
+
+    const secret = document.createElement("input");
+    secret.placeholder = p.isAdmin ? "admin (no number)" : "secret number";
+    secret.value = p.secret;
+    secret.style.width = "160px";
+    secret.oninput = e => p.secret = e.target.value;
+
+    if (p.isAdmin) secret.disabled = true;
+
+    const del = document.createElement("button");
+    del.textContent = "x";
+    del.onclick = () => {
+      if (p.isAdmin) return;
+      state.players.splice(i, 1);
+      renderPlayers();
+    };
+
+    row.appendChild(name);
+    row.appendChild(secret);
+    if (!p.isAdmin) row.appendChild(del);
+
+    container.appendChild(row);
+  });
+}
+
+/* =========================
+   ADD PLAYER (FIXED)
+   ========================= */
+
+function addPlayer() {
+  state.players.push({ name: "player", secret: "", isAdmin: false });
+  renderPlayers();
+}
+
+/* =========================
+   IMAGE
+   ========================= */
+
+function applyImage() {
+  state.image = document.getElementById("imgInput").value.trim();
+  applyImageToUI();
+  updateShareLink(); // ✅ only share link updates
+}
+
+function applyImageToUI() {
+  document.getElementById("imgInput").value = state.image || "";
+  document.getElementById("imgPreview").src = state.image || "";
+}
+
+/* =========================
+   COMPUTE
+   ========================= */
+
+function compute() {
+  const players = state.players.map(p => p.name);
+  const secrets = state.players.slice(1).map(p => p.secret || "");
+
+  const seed = secrets.join("-");
 
   const shuffled = seededShuffle(players, seed);
+
+  document.getElementById("seed").innerHTML =
+    `<code>${seed}</code>`;
 
   document.getElementById("result").innerHTML =
     shuffled.map(p => `<li>${p}</li>`).join("");
 
-  document.getElementById("debug").innerHTML = `
-    <div><b>Admin:</b> ${admin}</div>
-    <div><b>Players:</b> ${players.join(", ")}</div>
-    <div><b>Seed (from secrets only):</b> <code>${seed}</code></div>
-  `;
-})();
+  updateShareLink();
+}
 
+/* =========================
+   SHARE LINK (CLEAN)
+   ========================= */
 
-// deterministic shuffle
+function updateShareLink() {
+  const parts = [];
+
+  for (const p of state.players) {
+    const safeName = sanitizeName(p.name);
+
+    if (p.isAdmin) {
+      parts.push(safeName);
+    } else {
+      parts.push(`${safeName}-${p.secret || ""}`);
+    }
+  }
+
+  const participants = parts.join("|");
+
+  const url = new URL(window.location.origin + window.location.pathname);
+
+  url.searchParams.set("participants", participants);
+
+  if (state.image) {
+    url.searchParams.set("img", state.image);
+  }
+
+  document.getElementById("shareLink").innerHTML =
+    `<a href="${url.toString()}" target="_blank">${url.toString()}</a>`;
+}
+
+/* =========================
+   SHUFFLE
+   ========================= */
+
 function hashString(str) {
   let h = 2166136261;
   for (let i = 0; i < str.length; i++) {
@@ -94,6 +279,7 @@ function seededShuffle(arr, seedStr) {
 
   return a;
 }
+
 </script>
 
 </body>
